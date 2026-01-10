@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.dist/
+build/
+
+# Virtual env
+.venv/
+venv/
+
+# Local outputs / caches
+output/
+db/*.sqlite3
+db/*.sqlite3-*
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Env (keep example tracked)
+.env

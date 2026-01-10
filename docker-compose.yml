@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: ai_news_generator
+    env_file:
+      - .env
+    volumes:
+      - ./app:/app/app
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./db:/app/db
+    environment:
+      - TZ=Asia/Shanghai
+    command: ["tail", "-f", "/dev/null"] # Keep container running for exec
+
+networks:
+  default:
+    driver: bridge

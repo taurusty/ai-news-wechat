@@ -1,0 +1,84 @@
+timezone: Asia/Shanghai
+schedule:
+  # Monday is deep analysis day
+  deep_dive_weekday: 0  # 0=Mon ... 6=Sun
+
+output:
+  base_dir: ./output
+  image_mode: relative  # B: relative paths in HTML
+
+limits:
+  dry_summary_max_chars: 1000
+  deep_dive_target_chars: 3000
+
+sources:
+  - name: jiqizhixin
+    weight: 1.2
+    enabled: true
+  - name: aiera
+    weight: 1.0
+    enabled: true
+  - name: venturebeat
+    weight: 1.0
+    enabled: true
+  - name: engadget
+    weight: 0.9
+    enabled: true
+  - name: cnet
+    weight: 0.9
+    enabled: true
+  - name: techcrunch_ai
+    weight: 1.1
+    enabled: true
+
+filter:
+  keywords_any:
+    - AI
+    - 人工智能
+    - 大模型
+    - LLM
+    - Agent
+    - 生成式
+    - 推理
+    - 机器学习
+    - 深度学习
+    - 芯片
+    - CUDA
+    - NVIDIA
+    - OpenAI
+    - Anthropic
+    - Google
+    - Gemini
+    - Meta
+    - Llama
+    - 微软
+    - Copilot
+    - Stable Diffusion
+    - Midjourney
+    - Sora
+  keywords_not:
+    - 彩票
+    - 星座
+
+ranking:
+  max_items_considered: 40
+  top_k_for_article: 10
+
+llm:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  model_env: DEEPSEEK_MODEL
+  api_key_env: DEEPSEEK_API_KEY
+  relevance_check: true
+
+timeouts:
+  # 单个source抓取（列表页+多篇详情）整体最长耗时，超时则跳过该source
+  per_source_seconds: 25
+
+images:
+  use_original_images: true
+  generate_cover: true
+  generate_separators: true
+  cover:
+    width: 900
+    height: 500

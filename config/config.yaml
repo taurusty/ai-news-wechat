@@ -1,35 +1,44 @@
 timezone: Asia/Shanghai
-schedule:
-  # Monday is deep analysis day
-  deep_dive_weekday: 0  # 0=Mon ... 6=Sun
-
 output:
   base_dir: ./output
   image_mode: relative  # B: relative paths in HTML
 
 limits:
-  dry_summary_max_chars: 1000
-  deep_dive_target_chars: 3000
+  summary_max_chars: 1000
 
-sources:
-  - name: jiqizhixin
-    weight: 1.2
-    enabled: true
-  - name: aiera
-    weight: 1.0
-    enabled: true
-  - name: venturebeat
-    weight: 1.0
-    enabled: true
-  - name: engadget
-    weight: 0.9
-    enabled: true
-  - name: cnet
-    weight: 0.9
-    enabled: true
-  - name: techcrunch_ai
-    weight: 1.1
-    enabled: true
+columns:
+  - name: "每日简报"
+    min_items: 5
+    max_items: 10
+    sources:
+      - name: jiqizhixin
+        weight: 1.2
+      - name: aiera
+        weight: 1.0
+      - name: engadget
+        weight: 0.9
+      - name: cnet
+        weight: 0.9
+      - name: techcrunch_ai
+        weight: 1.1
+
+  - name: "科创热点"
+    min_items: 5
+    max_items: 10
+    sources:
+      - name: chinastarmarket
+        weight: 1.0
+
+  - name: "学术动态"
+    # 周一至周五发布
+    enabled_weekdays: [0, 1, 2, 3, 4]
+    min_items: 10
+    max_items: 10
+    # Arxiv只取前20篇精选，不需要更多
+    max_items_considered: 20
+    sources:
+      - name: arxiv_cs_ai
+        weight: 1.0
 
 filter:
   keywords_any:
@@ -73,7 +82,9 @@ llm:
 
 timeouts:
   # 单个source抓取（列表页+多篇详情）整体最长耗时，超时则跳过该source
-  per_source_seconds: 25
+  per_source_seconds: 30  # 增加到30秒，避免超时
+  # arXiv 需要访问多个 abs 页面，需要更长时间
+  arxiv_source_seconds: 120
 
 images:
   use_original_images: true

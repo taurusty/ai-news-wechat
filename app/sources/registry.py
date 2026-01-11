@@ -7,6 +7,8 @@ from app.sources.venturebeat import VentureBeatSource
 from app.sources.engadget import EngadgetSource
 from app.sources.cnet import CnetSource
 from app.sources.techcrunch_ai import TechCrunchAISource
+from app.sources.chinastarmarket import ChinaStarMarketSource
+from app.sources.arxiv_cs_ai import ArxivCsAiSource
 
 
 SOURCE_REGISTRY: Dict[str, Type[BaseSource]] = {
@@ -16,6 +18,8 @@ SOURCE_REGISTRY: Dict[str, Type[BaseSource]] = {
     "engadget": EngadgetSource,
     "cnet": CnetSource,
     "techcrunch_ai": TechCrunchAISource,
+    "chinastarmarket": ChinaStarMarketSource,
+    "arxiv_cs_ai": ArxivCsAiSource,
 }
 
 

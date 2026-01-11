@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 
@@ -9,164 +10,163 @@ def _esc(s: str) -> str:
     return html.escape(s or "")
 
 
+import re
+
+def _strip_conclusion_prefix(s: str) -> str:
+    # 移除“**结论/影响：**”或“**结论/影响:**”等前缀
+    return re.sub(r"\*\*结论/影响[:：]\*\*\s*", "", s)
+
 def _inline(s: str) -> str:
-    s = _esc(s)
+    s = _strip_conclusion_prefix(_esc(s))
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
     s = re.sub(r"`(.+?)`", r"<code style=\"background:#f5f5f5;padding:2px 4px;border-radius:3px;\">\1</code>", s)
     return s
 
 
-def _split_daily_sections(md: str) -> List[Dict[str, Any]]:
-    """把“干货总结”Markdown粗分成：开篇 / 要闻(列表) / 结语。
-
-    目标：给“要闻每条”插图提供锚点。
-
-    规则：
-    - 开篇：从开始到第一个列表项（- 开头）之前的段落
-    - 要闻：连续的 `- ` 列表项（每条视为一条新闻）
-    - 结语：列表结束后的段落
-
-    注意：这不是严格Markdown解析，只做稳定的工程化近似。
-    """
-
-    lines = (md or "").splitlines()
-    pre: List[str] = []
-    items: List[str] = []
-    post: List[str] = []
-
-    state = "pre"
-    for raw in lines:
-        line = raw.rstrip()
-        if state == "pre":
-            if line.lstrip().startswith("- "):
-                state = "items"
-                items.append(line.lstrip()[2:].strip())
-            else:
-                pre.append(line)
-        elif state == "items":
-            if line.lstrip().startswith("- "):
-                items.append(line.lstrip()[2:].strip())
-            else:
-                state = "post"
-                post.append(line)
-        else:
-            post.append(line)
-
-    return [
-        {"type": "pre", "lines": pre},
-        {"type": "items", "items": items},
-        {"type": "post", "lines": post},
-    ]
-
-
 def _render_paragraphs(lines: List[str]) -> List[str]:
+    """渲染段落，统一使用有序列表（数字编号）"""
     out: List[str] = []
-    in_ul = False
+    in_ol = False  # 有序列表状态
+    
     for raw in lines:
         line = raw.rstrip()
+        # 空行：如果当前在有序列表中，则忽略空行继续列表；否则跳过
         if not line.strip():
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
+            if in_ol:
+                # 在列表中，保持 <ol> 打开，直接跳过空行
+                continue
             continue
 
         if line.startswith("# "):
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
-            out.append(f"<h1 style=\"font-size:24px;line-height:1.4;margin:18px 0 10px;\">{_inline(line[2:])}</h1>")
+            if in_ol:
+                out.append("</ol>")
+                in_ol = False
+            out.append(
+                f"<h1 style=\"font-size:24px;line-height:1.4;margin:18px 0 10px;\">{_inline(line[2:])}</h1>"
+            )
         elif line.startswith("## "):
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
-            out.append(f"<h2 style=\"font-size:18px;line-height:1.5;margin:16px 0 10px;\">{_inline(line[3:])}</h2>")
+            if in_ol:
+                out.append("</ol>")
+                in_ol = False
+            out.append(
+                f"<h2 style=\"font-size:18px;line-height:1.5;margin:16px 0 10px;\">{_inline(line[3:])}</h2>"
+            )
         elif line.startswith("> "):
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
+            if in_ol:
+                out.append("</ol>")
+                in_ol = False
             out.append(
                 f"<blockquote style=\"margin:12px 0;padding:10px 12px;border-left:4px solid #ddd;background:#fafafa;color:#444;\">{_inline(line[2:])}</blockquote>"
             )
+        elif re.match(r"^\d+\.\s+", line):  # 列表编号行
+            # 处理数字编号（1. 2. 3. ...）- 优先匹配
+            if not in_ol:
+                out.append("<ol style=\"padding-left:22px;margin:10px 0;\">")
+                in_ol = True
+            # 移除数字编号，保留内容（浏览器会自动编号）
+            content = re.sub(r"^\d+\.\s+", "", line)
+            out.append(
+                f"<li style=\"margin:6px 0;font-size:15px;line-height:1.75;color:#222;\">{_inline(content)}</li>"
+            )
         elif line.startswith("- "):
-            if not in_ul:
-                out.append("<ul style=\"padding-left:22px;margin:10px 0;\">")
-                in_ul = True
-            out.append(f"<li style=\"margin:6px 0;font-size:15px;line-height:1.75;color:#222;\">{_inline(line[2:])}</li>")
+            # 兼容旧格式：- 开头也转为有序列表
+            if not in_ol:
+                out.append("<ol style=\"padding-left:22px;margin:10px 0;\">")
+                in_ol = True
+            out.append(
+                f"<li style=\"margin:6px 0;font-size:15px;line-height:1.75;color:#222;\">{_inline(line[2:])}</li>"
+            )
         else:
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
-            out.append(f"<p style=\"margin:10px 0;font-size:15px;line-height:1.75;color:#222;\">{_inline(line)}</p>")
+            if in_ol:
+                out.append("</ol>")
+                in_ol = False
+            out.append(
+                f"<p style=\"margin:10px 0;font-size:15px;line-height:1.75;color:#222;\">{_inline(line)}</p>"
+            )
 
-    if in_ul:
-        out.append("</ul>")
+    if in_ol:
+        out.append("</ol>")
     return out
 
 
-def render_wechat_html(*, draft: Dict[str, Any], cover_rel: Optional[str], items: List[Dict[str, Any]], images_rel: Dict[str, str]) -> str:
-    """公众号友好 HTML 渲染
+def _pick_column_images(items: List[Dict[str, Any]], images_rel: Dict[str, str], max_images: int = 2) -> List[str]:
+    picked: List[str] = []
+    for a in items:
+        if len(picked) >= max_images:
+            break
+        url = a.get("url")
+        if not url:
+            continue
+        img = images_rel.get(url)
+        if img and img not in picked:
+            picked.append(img)
+    return picked
 
-    新需求：
-    - “今日资讯来源”仅作为参考文献：不配图，只列出处
-    - 正文部分：干货总结中“每条要闻”后插入配图（优先原图，否则占位图）
 
-    注意：深度解读目前不强制逐段插图（可以后续再加）；但仍会生成封面。
+def render_wechat_html(
+    *,
+    columns_data: List[Dict[str, Any]],
+    source_urls: List[str],
+    run_date: date,
+) -> str:
+    """渲染最终公众号 HTML（单页三栏目）。
+
+    columns_data: [{draft, items, cover_rel, images_rel}, ...]
+    - 每个栏目渲染：栏目标题 +（可选）1-2张栏目配图 + Markdown正文
+    - 文末输出所有来源 URL
     """
 
-    md = draft.get("markdown", "")
     out: List[str] = []
 
-    # 封面
-    if cover_rel:
+    # 顶部封面：取第一个栏目生成的封面（如果有）
+    top_cover = None
+    for c in columns_data:
+        cover_rel = c.get("cover_rel")
+        if cover_rel:
+            top_cover = cover_rel
+            break
+
+    if top_cover:
         out.append(
-            f"<p style=\"margin:0 0 14px;\"><img src=\"{_esc(cover_rel)}\" style=\"width:100%;border-radius:10px;\"/></p>"
+            f"<p style=\"margin:0 0 14px;\"><img src=\"{_esc(top_cover)}\" style=\"width:100%;border-radius:10px;\"/></p>"
         )
 
-    draft_type = draft.get("type")
-    if draft_type == "daily_summary":
-        sections = _split_daily_sections(md)
-        for sec in sections:
-            if sec["type"] == "pre":
-                out.extend(_render_paragraphs(sec["lines"]))
-            elif sec["type"] == "items":
-                # 用“每条要闻后跟图”的形式渲染（不使用<ul>，避免出现黑点）
-                items_text: List[str] = sec.get("items", [])
-                out.append("<div style=\"margin:10px 0;\">")
-                for idx, text in enumerate(items_text, 1):
-                    out.append(
-                        f"<p style=\"margin:10px 0 6px;font-size:15px;line-height:1.75;color:#222;\"><strong>{idx}.</strong> {_inline(text)}</p>"
-                    )
-                    # 为第 idx 条选入新闻插图（与 selected 顺序对齐）
-                    if idx <= len(items):
-                        url = items[idx - 1].get("url")
-                        img_rel = images_rel.get(url)
-                        if img_rel:
-                            out.append(
-                                f"<p style=\"margin:8px 0 14px;\"><img src=\"{_esc(img_rel)}\" style=\"width:100%;border-radius:8px;\"/></p>"
-                            )
-                out.append("</div>")
-            else:
-                # post 部分不要让“- ”再变成<ul>，统一当成普通段落
-                post_lines = []
-                for ln in sec.get("lines", []):
-                    if isinstance(ln, str) and ln.lstrip().startswith("- "):
-                        post_lines.append(ln.lstrip()[2:])
-                    else:
-                        post_lines.append(ln)
-                out.extend(_render_paragraphs(post_lines))
-    else:
-        # 深度解读：保持现有Markdown渲染（不逐条插图），避免错误插入
+    out.append(
+        f"<p style=\"margin:6px 0 14px;font-size:13px;line-height:1.6;color:#666;\">日期：{_esc(run_date.isoformat())}</p>"
+    )
+
+    for idx, col in enumerate(columns_data, 1):
+        draft: Dict[str, Any] = col.get("draft") or {}
+        items: List[Dict[str, Any]] = col.get("items") or []
+        images_rel: Dict[str, str] = col.get("images_rel") or {}
+
+        col_name = draft.get("name") or f"栏目{idx}"
+        md = draft.get("markdown") or ""
+
+        out.append("<hr style=\"border:none;border-top:1px solid #eee;margin:18px 0;\"/>")
+        out.append(
+            f"<h2 style=\"font-size:20px;line-height:1.5;margin:14px 0 10px;\">{_esc(col_name)}</h2>"
+        )
+
+        # 每栏 1-2 张图
+        picked_imgs = _pick_column_images(items, images_rel, max_images=2)
+        for img_rel in picked_imgs:
+            out.append(
+                f"<p style=\"margin:8px 0 14px;\"><img src=\"{_esc(img_rel)}\" style=\"width:100%;border-radius:8px;\"/></p>"
+            )
+
         out.extend(_render_paragraphs(md.splitlines()))
 
-    # 参考文献区：不配图
-    if items:
+    # 信息来源：列出 URL
+    if source_urls:
         out.append("<hr style=\"border:none;border-top:1px solid #eee;margin:18px 0;\"/>")
-        out.append("<h2 style=\"font-size:18px;line-height:1.5;margin:16px 0 10px;\">今日资讯来源</h2>")
+        out.append(
+            "<h2 style=\"font-size:18px;line-height:1.5;margin:16px 0 10px;\">信息来源</h2>"
+        )
         out.append("<ol style=\"padding-left:22px;margin:10px 0;\">")
-        for a in items:
-            title = a.get("title", "")
+        for u in sorted(set(source_urls)):
             out.append(
-                f"<li style=\"margin:6px 0;font-size:13px;line-height:1.6;color:#333;\">{_esc(title)}</li>"
+                f"<li style=\"margin:6px 0;font-size:13px;line-height:1.6;color:#333;\">{_esc(u)}</li>"
             )
         out.append("</ol>")
 

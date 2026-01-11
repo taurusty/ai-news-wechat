@@ -24,24 +24,9 @@ def prepare_images(*, day_dir: Path, selected: List[Dict[str, Any]], draft_type:
     images_dir = day_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) cover
+    # 1) cover - 禁用自动生成，只从文章抓取
     cover_rel = None
-    try:
-        title = "AI热点" if draft_type == "daily_summary" else "深度解读"
-        subtitle = "每日资讯播报 + 结论" if draft_type == "daily_summary" else "产业分析 · 产品评测"
-        date_str = day_dir.name
-        cover_path = day_dir / "cover.png"
-        generate_cover(
-            out_path=cover_path,
-            title=title,
-            subtitle=subtitle,
-            date_str=date_str,
-            width=int(cover_cfg.get("width", 900)),
-            height=int(cover_cfg.get("height", 500)),
-        )
-        cover_rel = "cover.png"
-    except Exception:
-        cover_rel = None
+    # 不再自动生成封面，只使用文章中的图片
 
     # 2) per-article images
     images_rel: Dict[str, str] = {}
@@ -60,16 +45,7 @@ def prepare_images(*, day_dir: Path, selected: List[Dict[str, Any]], draft_type:
             if got:
                 rel = f"images/{fname}"
 
-        if not rel:
-            # 生成分隔图当做占位
-            fname = f"{idx:02d}_sep.png"
-            out_path = images_dir / fname
-            try:
-                generate_separator(out_path=out_path, text="AI 快讯")
-                rel = f"images/{fname}"
-            except Exception:
-                rel = None
-
+        # 不再生成占位图，只使用从文章抓取的图片
         if rel:
             images_rel[url] = rel
 

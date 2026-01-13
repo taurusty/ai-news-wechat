@@ -17,30 +17,40 @@ class AieraSource(BaseSource):
         super().__init__(base_url="https://aiera.com.cn/", source_name="aiera", weight=weight, enabled=enabled)
 
     async def fetch_articles(self, max_items: int = 10) -> List[Article]:
-        # 尝试从首页抓取文章链接
+        # 从首页抓取文章（WordPress结构）
         html = await self.fetch(self.base_url, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(html, "lxml")
 
+        # WordPress通常使用<article>标签
+        article_elements = soup.find_all('article', limit=max_items * 2)
+        
         links = []
-        for a in soup.select('a[href]'):
-            href = a.get('href')
-            if not href:
+        for article_elem in article_elements:
+            # 查找标题和链接
+            heading = article_elem.find(['h1', 'h2', 'h3'])
+            if not heading:
                 continue
-            if 'aiera.com.cn' in href or href.startswith('/'):
-                url = self.make_absolute_url(href)
-            else:
+            
+            a_tag = heading.find('a')
+            if not a_tag or not a_tag.get('href'):
                 continue
-
-            # 粗略过滤：含有文章详情特征（如 /post/ /detail/ 等），不行就放宽
-            if any(x in url for x in ["/post", "/detail", "/article", "/news"]):
-                title = (a.get_text() or "").strip()
-                if url not in [u for u, _ in links]:
-                    links.append((url, title))
-            if len(links) >= max_items * 3:
+            
+            href = a_tag.get('href')
+            title = a_tag.get_text(strip=True)
+            
+            if not title or len(title) < 5:
+                continue
+            
+            url = self.make_absolute_url(href) if href.startswith('/') else href
+            
+            if url not in [u for u, _ in links]:
+                links.append((url, title))
+            
+            if len(links) >= max_items * 2:
                 break
 
         articles: List[Article] = []
-        for url, title in links[: max_items * 3]:
+        for url, title in links[: max_items * 2]:
             try:
                 art = await self._fetch_detail(url, fallback_title=title)
                 if art:

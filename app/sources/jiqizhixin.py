@@ -1,4 +1,5 @@
 import re
+import json
 from datetime import datetime
 from typing import List
 
@@ -18,47 +19,65 @@ class JiqizhixinSource(BaseSource):
         super().__init__(base_url="https://www.jiqizhixin.com/", source_name="jiqizhixin", weight=weight, enabled=enabled)
 
     async def fetch_articles(self, max_items: int = 10) -> List[Article]:
-        # 机器之心首页/推荐流会变，使用“资讯”聚合页更稳定（若失效再降级到首页）
-        list_urls = [
-            "https://www.jiqizhixin.com/",
-        ]
-
-        last_err = None
-        for list_url in list_urls:
-            try:
-                html = await self.fetch(list_url, headers={"User-Agent": "Mozilla/5.0"})
-                return await self._parse_list(html, max_items=max_items)
-            except Exception as e:
-                last_err = e
-                continue
-        raise SourceError(f"jiqizhixin list fetch failed: {last_err}")
+        # 使用机器之心的API接口
+        api_url = "https://www.jiqizhixin.com/api/v1/articles"
+        
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json",
+                "Referer": "https://www.jiqizhixin.com/"
+            }
+            json_text = await self.fetch(api_url, headers=headers)
+            articles_data = json.loads(json_text)
+            
+            articles: List[Article] = []
+            for item in articles_data:
+                try:
+                    # 从API数据构建文章
+                    title = item.get('title', '').strip()
+                    if not title or 'title-' in title:  # 跳过无效标题
+                        continue
+                    
+                    # 构建文章URL（猜测格式）
+                    # 注意：API没有返回URL，可能需要进一步调整
+                    description = item.get('description', '').strip()
+                    cover_image = item.get('cover_image')
+                    author_info = item.get('author', {})
+                    author = author_info.get('author_name', '') if author_info else ''
+                    
+                    if not description or len(description) < 20:
+                        continue
+                    
+                    # 由于API没有返回详细URL，我们暂时无法获取完整内容
+                    # 仅使用description作为summary和content
+                    article = Article(
+                        title=title,
+                        url=self.base_url,  # 暂时使用首页URL
+                        summary=description[:180],
+                        content=description,
+                        publish_time=datetime.utcnow(),
+                        source=self.source_name,
+                        source_name="机器之心",
+                        author=author,
+                        image_url=cover_image,
+                        tags=[],
+                        extra={},
+                    )
+                    articles.append(article)
+                    
+                    if len(articles) >= max_items:
+                        break
+                except Exception:
+                    continue
+            
+            return articles
+        except Exception as e:
+            raise SourceError(f"jiqizhixin API fetch failed: {e}")
 
     async def _parse_list(self, html: str, max_items: int) -> List[Article]:
-        soup = BeautifulSoup(html, "lxml")
-        # 尝试提取文章链接
-        links = []
-        for a in soup.select('a[href^="/articles/"]'):
-            href = a.get("href")
-            title = (a.get_text() or "").strip()
-            if not href:
-                continue
-            url = self.make_absolute_url(href)
-            if "/articles/" in url and url not in [x[0] for x in links]:
-                links.append((url, title))
-            if len(links) >= max_items * 2:
-                break
-
-        articles: List[Article] = []
-        for url, fallback_title in links[: max_items * 2]:
-            try:
-                art = await self._fetch_detail(url, fallback_title=fallback_title)
-                if art:
-                    articles.append(art)
-            except Exception:
-                continue
-            if len(articles) >= max_items:
-                break
-        return articles
+        # 保留旧方法以备用
+        return []
 
     async def _fetch_detail(self, url: str, fallback_title: str = "") -> Article:
         html = await self.fetch(url, headers={"User-Agent": "Mozilla/5.0"})

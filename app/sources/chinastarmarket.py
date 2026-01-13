@@ -1,4 +1,5 @@
 import re
+import json
 from datetime import datetime
 from typing import List, Optional, Dict, Tuple
 
@@ -56,41 +57,28 @@ class ChinaStarMarketSource(BaseSource):
         )
 
     async def fetch_articles(self, max_items: int = 10) -> List[Article]:
-        """从首页抓取，不足5条时从 /telegraph 补充
+        """从首页抓取阅读量>1000的文章
         
         规则：
-        - 先从首页抓取阅读量>10000的文章（Top10候选）
-        - 如果不足5条，从 /telegraph 页面补充到至少5条
-        - 最终返回不超过 max_items 条
+        - 降低阅读量阈值：从>10000降低到>1000（更容易凑够5条）
+        - 从首页抓取所有符合条件的文章，按阅读量降序
+        - 返回前 max_items 条
+        
+        注意：/telegraph 页面是动态加载的（Next.js），无法直接抓取
         """
-        min_required = 5
-        
-        # 第一步：从首页抓取
-        articles = await self._fetch_from_homepage(max_items)
-        print(f"[INFO] 从首页抓取到 {len(articles)} 篇文章")
-        
-        # 如果不足5条，从 /telegraph 补充
-        if len(articles) < min_required:
-            need_more = min_required - len(articles)
-            print(f"[INFO] 不足{min_required}条，需要从 /telegraph 补充 {need_more} 篇")
-            telegraph_articles = await self._fetch_from_telegraph(need_more)
-            
-            # 去重：避免重复URL
-            existing_urls = {a.url for a in articles}
-            added_count = 0
-            for art in telegraph_articles:
-                if art.url not in existing_urls:
-                    articles.append(art)
-                    added_count += 1
-                    if len(articles) >= max_items:
-                        break
-            
-            print(f"[INFO] 从 /telegraph 补充了 {added_count} 篇，当前共 {len(articles)} 篇")
+        # 降低阈值：从>10000降到>1000
+        articles = await self._fetch_from_homepage_lowered_threshold(max_items, min_view_count=1000)
+        print(f"[INFO] 从首页抓取到 {len(articles)} 篇文章（阅读量>1000）")
         
         return articles[:max_items]
 
-    async def _fetch_from_homepage(self, max_items: int = 10) -> List[Article]:
-        """从首页抓取阅读量>10000的文章"""
+    async def _fetch_from_homepage_lowered_threshold(self, max_items: int = 10, min_view_count: int = 1000) -> List[Article]:
+        """从首页抓取阅读量>min_view_count的文章
+        
+        Args:
+            max_items: 最多返回的文章数
+            min_view_count: 最低阅读量阈值（默认1000，原来是10000）
+        """
         list_url = "https://www.chinastarmarket.cn/"
         html = await self.fetch(list_url, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(html, "lxml")
@@ -139,34 +127,36 @@ class ChinaStarMarketSource(BaseSource):
             vc = parse_view_count(container_text)
             if vc is None:
                 continue
-            # 阅读量必须大于10000
-            if vc < 10000:
+            # 降低阈值：从10000降到min_view_count
+            if vc < min_view_count:
                 continue
 
             if url not in candidates or vc > candidates[url][1]:
                 candidates[url] = (title, vc)
 
-            # 宽松限制：避免遍历太久
-            if len(candidates) >= 80:
+            # 宽松限制：避免遍历太久（增加到150个）
+            if len(candidates) >= 150:
                 break
 
-        # 按阅读量降序取Top10候选
+        # 按阅读量降序排序
         sorted_candidates = sorted(
             [(u, t, vc) for u, (t, vc) in candidates.items()],
             key=lambda x: x[2],
             reverse=True,
         )
-        top10 = sorted_candidates[:10]
 
         articles: List[Article] = []
-        for url, title, vc in top10:
+        # 抓取前 max_items*2 个候选（多抓一些，避免详情页失败）
+        for url, title, vc in sorted_candidates[:max_items * 2]:
             try:
                 art = await self._fetch_detail(url, fallback_title=title)
                 if art:
                     art.extra = art.extra or {}
                     art.extra["view_count"] = vc
                     articles.append(art)
-            except Exception:
+                    print(f"[INFO] 科创头条成功抓取: [{vc:,}次] {title[:40]}")
+            except Exception as e:
+                print(f"[WARN] 抓取详情失败 {url}: {e}")
                 continue
 
             if len(articles) >= max_items:
@@ -174,167 +164,96 @@ class ChinaStarMarketSource(BaseSource):
 
         return articles
 
-    async def _fetch_from_telegraph(self, need_count: int) -> List[Article]:
-        """从 /telegraph 页面抓取文章补充
-        
-        根据实际页面结构：
-        <a class="... list-link" href="/detail/2254121" ...>
-            <strong>标题</strong>
-        </a>
-        """
-        telegraph_url = "https://www.chinastarmarket.cn/telegraph"
-        articles: List[Article] = []
-        
-        try:
-            html = await self.fetch(telegraph_url, headers={"User-Agent": "Mozilla/5.0"})
-            soup = BeautifulSoup(html, "lxml")
-            
-            links = []
-            seen_urls = set()
-            
-            # 优先使用 list-link 类选择器（根据实际页面结构）
-            for a in soup.select('a.list-link, a[class*="list-link"]'):
-                href = a.get('href')
-                if not href:
-                    continue
-                    
-                if href.startswith('/'):
-                    url = self.make_absolute_url(href)
-                elif href.startswith('https://www.chinastarmarket.cn/'):
-                    url = href
-                else:
-                    continue
-                    
-                # 只抓取 /detail/ 开头的文章
-                if '/detail/' not in url:
-                    continue
-                    
-                if url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                
-                # 标题可能在 <strong> 标签内，或者直接在 a 标签的文本中
-                title = ""
-                strong = a.find('strong')
-                if strong:
-                    title = strong.get_text(strip=True)
-                else:
-                    title = a.get_text(strip=True)
-                
-                # 如果还是太短，尝试获取整个链接的文本
-                if len(title) < 6:
-                    title = a.get_text(" ", strip=True)
-                
-                # 清理标题：移除可能的【】标记
-                title = re.sub(r'^【.*?】', '', title).strip()
-                
-                if len(title) < 6:
-                    continue
-                    
-                links.append((url, title))
-                    
-                # 多抓一些候选，因为可能有些抓取失败
-                if len(links) >= need_count * 4:
-                    break
-            
-            # 如果 list-link 选择器没找到足够的，回退到通用选择器
-            if len(links) < need_count:
-                for a in soup.select('a[href*="/detail/"]'):
-                    href = a.get('href')
-                    if not href:
-                        continue
-                        
-                    if href.startswith('/'):
-                        url = self.make_absolute_url(href)
-                    elif href.startswith('https://www.chinastarmarket.cn/'):
-                        url = href
-                    else:
-                        continue
-                        
-                    if '/detail/' not in url:
-                        continue
-                        
-                    if url in seen_urls:
-                        continue
-                    seen_urls.add(url)
-                    
-                    title = a.get_text(strip=True)
-                    # 清理标题
-                    title = re.sub(r'^【.*?】', '', title).strip()
-                    
-                    if len(title) >= 6:
-                        links.append((url, title))
-                        
-                    if len(links) >= need_count * 4:
-                        break
-            
-            print(f"[INFO] 从 /telegraph 找到 {len(links)} 个候选链接")
-            
-            # 抓取详情
-            for url, title in links:
-                if len(articles) >= need_count:
-                    break
-                try:
-                    art = await self._fetch_detail(url, fallback_title=title)
-                    if art:
-                        # telegraph 页面可能没有阅读量，设为0
-                        art.extra = art.extra or {}
-                        if "view_count" not in art.extra:
-                            art.extra["view_count"] = 0
-                        articles.append(art)
-                        print(f"[INFO] 从 /telegraph 成功抓取: {art.title[:50]}")
-                except Exception as e:
-                    print(f"[WARN] 抓取 /telegraph 文章失败 {url}: {e}")
-                    continue
-                    
-        except Exception as e:
-            print(f"[WARN] 从 /telegraph 补充抓取失败: {e}")
-            import traceback
-            traceback.print_exc()
-            
-        print(f"[INFO] 从 /telegraph 最终补充了 {len(articles)} 篇文章")
-        return articles
+    # 注意：/telegraph 页面是动态加载的（Next.js），无法直接抓取
+    # 已改为降低首页阅读量阈值（从>10000降到>1000）来确保有足够文章
 
     async def _fetch_detail(self, url: str, fallback_title: str = "") -> Optional[Article]:
         html = await self.fetch(url, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(html, "lxml")
 
+        # 尝试从__NEXT_DATA__提取（Next.js动态渲染）
+        next_data_script = soup.find('script', {'id': '__NEXT_DATA__'})
+        if next_data_script:
+            try:
+                import json
+                data = json.loads(next_data_script.get_text())
+                page_data = data.get('props', {}).get('pageProps', {}).get('data', {})
+                
+                if page_data:
+                    title = page_data.get('title', fallback_title)
+                    brief = page_data.get('brief', '')
+                    content_html = page_data.get('content', '')
+                    
+                    # 从HTML内容提取纯文本
+                    if content_html:
+                        content_soup = BeautifulSoup(content_html, 'lxml')
+                        content = content_soup.get_text("\n", strip=True)
+                    else:
+                        content = brief
+                    
+                    content = re.sub(r"\n{3,}", "\n\n", content).strip()
+                    summary = brief[:220] if brief else content[:220].replace("\n", " ")
+                    
+                    # 提取图片
+                    image_url = None
+                    if content_html:
+                        content_soup = BeautifulSoup(content_html, 'lxml')
+                        img = content_soup.find('img')
+                        if img:
+                            src = img.get('src') or img.get('data-src')
+                            if src:
+                                if src.startswith('http'):
+                                    image_url = src
+                                elif src.startswith('/'):
+                                    image_url = self.make_absolute_url(src)
+                    
+                    # 从og:image获取
+                    if not image_url:
+                        og_img = soup.find('meta', {"property": "og:image"})
+                        if og_img and og_img.get('content'):
+                            image_url = og_img['content'].strip()
+                    
+                    publish_time = datetime.now()
+                    
+                    return Article(
+                        title=title,
+                        url=url,
+                        summary=summary,
+                        content=content,
+                        publish_time=publish_time,
+                        source=self.source_name,
+                        source_name="科创板日报",
+                        author="",
+                        image_url=image_url,
+                        tags=[],
+                        extra={},
+                    )
+            except Exception as e:
+                print(f"[WARN] 解析__NEXT_DATA__失败: {e}")
+        
+        # 回退到传统方法（虽然可能抓不到内容）
         title = fallback_title
         h1 = soup.find('h1')
         if h1 and h1.get_text(strip=True):
             title = h1.get_text(strip=True)
+        
+        # 尝试从title标签获取
+        if not title:
+            title_tag = soup.find('title')
+            if title_tag:
+                title = title_tag.get_text(strip=True)
+        
         title = title.strip()
         if not title:
             return None
 
-        publish_time = datetime.utcnow()
-        meta_time = soup.find('meta', {"property": "article:published_time"})
-        if meta_time and meta_time.get('content'):
-            try:
-                publish_time = date_parser.parse(meta_time['content'])
-            except Exception:
-                pass
-
-        # 优先从 og:image 获取
+        publish_time = datetime.now()
+        
+        # 从 og:image 获取
         image_url = None
         og_img = soup.find('meta', {"property": "og:image"})
         if og_img and og_img.get('content'):
             image_url = og_img['content'].strip()
-        
-        # 如果 og:image 没有，从文章正文中提取第一张图片
-        if not image_url:
-            # 尝试从正文中找 img 标签
-            img_tags = soup.select('article img, .content img, .article-content img, .post-content img, [class*="content"] img')
-            for img in img_tags:
-                src = img.get('src') or img.get('data-src') or img.get('data-original')
-                if src:
-                    if src.startswith('http'):
-                        image_url = src
-                    elif src.startswith('/'):
-                        image_url = self.make_absolute_url(src)
-                    else:
-                        image_url = self.make_absolute_url(src)
-                    break
 
         extracted = trafilatura.extract(html, include_comments=False, include_tables=False)
         content = (extracted or "").strip()

@@ -1,0 +1,121 @@
+=================================================================
+              Git 推送到 GitHub - 命令清单
+=================================================================
+
+方式1: 使用批处理脚本（推荐，简单）
+-----------------------------------------------------------------
+双击运行：git_push.bat
+
+按提示操作即可！
+
+
+方式2: 手动执行命令（完整控制）
+-----------------------------------------------------------------
+
+【首次推送 - 新建GitHub仓库】
+
+1. 在GitHub创建新仓库：
+   访问 https://github.com/new
+   - 仓库名：ai-news-generator
+   - 描述：AI资讯简报生成器 - 自动抓取AI资讯并生成微信公众号文章
+   - 选择 Public 或 Private
+   - 不要勾选 "Initialize with README"
+   - 点击 Create repository
+
+2. 在PowerShell中执行以下命令：
+
+cd C:\Users\zang\Desktop\linux_ai_news
+
+git init
+
+git add .
+
+git commit -m "v1.1.0: AI资讯简报生成器首次发布
+
+- 支持三大核心栏目：每日资讯、科创头条、学术动态
+- 集成多个中英文AI资讯数据源
+- 使用DeepSeek大模型生成专业内容
+- 完美适配微信公众号HTML格式
+- 修复多个数据源抓取问题
+- 优化图片处理和文献来源链接"
+
+git branch -M main
+
+git remote add origin https://github.com/你的用户名/ai-news-generator.git
+
+git push -u origin main
+
+
+【后续更新推送】
+
+cd C:\Users\zang\Desktop\linux_ai_news
+
+git add .
+
+git commit -m "更新说明"
+
+git push origin main
+
+
+=================================================================
+                    推送前检查清单
+=================================================================
+
+✓ 确认 .env 文件已被 .gitignore 排除（不会泄露API密钥）
+✓ 确认 output/ 文件夹已被排除（不推送生成的文件）
+✓ 确认 .venv/ 虚拟环境已被排除
+✓ 确认 db/*.sqlite3 数据库已被排除
+
+查看将要推送的文件：
+git status
+
+
+=================================================================
+                   遇到认证问题？
+=================================================================
+
+GitHub已不再支持密码认证，需要使用 Personal Access Token (PAT)：
+
+1. 访问 https://github.com/settings/tokens
+2. Generate new token (classic)
+3. 勾选 repo 权限
+4. 生成并复制 token
+5. 推送时输入：
+   - Username: 你的GitHub用户名
+   - Password: 粘贴刚才的token（不是GitHub密码）
+
+
+=================================================================
+                   推送成功后
+=================================================================
+
+1. 访问你的GitHub仓库
+2. 检查README显示是否正常
+3. 在仓库Settings中添加Topics标签：
+   ai, python, news-aggregator, wechat, deepseek, automation
+4. （可选）创建 Release v1.1.0
+
+
+=================================================================
+            快速命令（复制粘贴到PowerShell）
+=================================================================
+
+# 首次推送（记得替换你的GitHub用户名）
+cd C:\Users\zang\Desktop\linux_ai_news
+git init
+git add .
+git commit -m "v1.1.0: AI资讯简报生成器首次发布"
+git branch -M main
+git remote add origin https://github.com/你的用户名/ai-news-generator.git
+git push -u origin main
+
+# 后续更新
+cd C:\Users\zang\Desktop\linux_ai_news
+git add .
+git commit -m "更新内容"
+git push origin main
+
+
+=================================================================
+            完成！项目文件已全部准备就绪 🎉
+=================================================================

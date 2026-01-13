@@ -27,3 +27,9 @@ Thumbs.db
 
 # Env (keep example tracked)
 .env
+
+# Test/Debug files
+test_*.py
+debug_*.py
+analyze_*.py
+fix_*.py

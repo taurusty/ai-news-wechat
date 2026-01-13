@@ -84,10 +84,20 @@ def main():
 
     parser = argparse.ArgumentParser(description="AI新闻聚合并生成微信公众号HTML")
     parser.add_argument("--date", default="today", help="YYYY-MM-DD or today")
+    parser.add_argument(
+        "--columns",
+        default="",
+        help="仅运行指定栏目名称，逗号分隔。例如：--columns 学术动态 或 --columns 学术动态,每日简报",
+    )
     args = parser.parse_args()
 
     with step("加载配置"):
         cfg = load_config()
+
+    # 仅运行指定栏目
+    only_columns = []
+    if args.columns:
+        only_columns = [x.strip() for x in args.columns.split(",") if x.strip()]
 
     run_date = parse_date(args.date)
     weekday = run_date.weekday()
@@ -126,6 +136,10 @@ def main():
     try:
         for column_cfg in cfg.get("columns", []):
             column_name = column_cfg.get("name", "")
+
+            if only_columns and column_name not in only_columns:
+                print(f"[INFO ] 跳过栏目：{column_name}（未在 --columns 指定范围内）")
+                continue
 
             # 按工作日启用
             enabled_days = column_cfg.get("enabled_weekdays")
@@ -247,7 +261,7 @@ def main():
                     md_file.write_text(draft["markdown"], encoding="utf-8")
                     print(f"[INFO] 已保存 {column_name} 的 markdown: {md_file}")
 
-                # Step H: 图片（每条文章尝试下载原图；封面会生成一次即可）
+                # Step H: 图片（每条文章尝试下载原图，使用清晰的命名）
                 cover_rel = None
                 images_rel: Dict[str, str] = {}
                 if draft and selected_dicts:
@@ -260,6 +274,7 @@ def main():
                                 selected=selected_dicts,
                                 draft_type=draft.get("type", "raw_list"),
                                 cover_cfg=cfg.get("images", {}).get("cover", {}),
+                                column_name=column_name,  # 传入栏目名用于命名
                             )
                         except Exception as e:
                             print(f"WARN: prepare_images failed: {e}")

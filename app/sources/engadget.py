@@ -26,19 +26,21 @@ class EngadgetSource(BaseSource):
             href = a.get('href')
             if not href:
                 continue
-            # Engadget文章通常是 /xxx/yyy.html 或带日期路径
-            if href.startswith('/'):
-                url = self.make_absolute_url(href)
-            elif href.startswith('https://www.engadget.com/'):
-                url = href
-            else:
-                continue
-
-            if not (url.endswith('.html') or re.search(r"/\d{4}/\d{2}/\d{2}/", url)):
+            
+            # Engadget文章链接包含.html
+            url = href
+            if not url.startswith('http'):
+                if href.startswith('/'):
+                    url = self.make_absolute_url(href)
+                else:
+                    continue
+            
+            # 必须包含 .html 且是 engadget.com 域名
+            if not ('.html' in url and 'engadget.com' in url):
                 continue
 
             title = (a.get_text() or "").strip()
-            if len(title) < 8:
+            if len(title) < 10:  # 过滤掉太短的标题
                 continue
 
             if url not in [u for u, _ in links]:

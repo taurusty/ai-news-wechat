@@ -7,7 +7,10 @@ limits:
   summary_max_chars: 1000
 
 columns:
-  - name: "每日简报"
+  # 第一栏：每日资讯
+  # 从以下网站爬取：机器之心、AIERA、Engadget、CNET、TechCrunch AI
+  # 至少5条最多10条，不足时从前一天补充
+  - name: "每日资讯"
     min_items: 5
     max_items: 10
     sources:
@@ -22,20 +25,26 @@ columns:
       - name: techcrunch_ai
         weight: 1.1
 
-  - name: "科创热点"
+  # 第二栏：科创头条
+  # 从科创板日报（chinastarmarket.cn）爬取
+  # 从阅读量排名前10中选取最少5条，最多10条
+  # 总结文章要点，把事情讲清楚，包含结论
+  - name: "科创头条"
     min_items: 5
     max_items: 10
     sources:
       - name: chinastarmarket
         weight: 1.0
 
+  # 第三栏：学术动态
+  # 从 arXiv cs.AI 爬取（周一至周五）
+  # 每天抓取前20篇文章，选取通俗易懂的前10条
+  # 总结研究要点和结论，当天不足20条就爬取前一天的
   - name: "学术动态"
-    # 周一至周五发布
-    enabled_weekdays: [0, 1, 2, 3, 4]
+    enabled_weekdays: [0, 1, 2, 3, 4]  # 周一至周五
     min_items: 10
     max_items: 10
-    # Arxiv只取前20篇精选，不需要更多
-    max_items_considered: 20
+    max_items_considered: 20  # 从前20篇中选10篇
     sources:
       - name: arxiv_cs_ai
         weight: 1.0

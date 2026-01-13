@@ -56,21 +56,60 @@ class ArxivCsAiSource(BaseSource):
 
     async def _fetch_for_date(self, target_date: date, need_count: int) -> List[Article]:
         """抓取指定日期的文章
-        
-        优化：先批量获取所有候选的 abs_url，然后并发抓取（但限制并发数避免过载）
+
+        方案A：解析 list 页的 <h3> 日期标题，只抓取对应日期的 <dl> 内容。
         """
         url = "https://arxiv.org/list/cs.AI/recent"
         html = await self.fetch(url, headers={"User-Agent": "Mozilla/5.0"})
         soup = BeautifulSoup(html, "lxml")
 
-        # arXiv recent 页面结构：dt (id) + dd (meta)
-        dts = soup.select('dl dt')
-        dds = soup.select('dl dd')
-        pairs = list(zip(dts, dds))
+        # 1) 在 list 页找到目标日期对应分组：解析所有 <h3> 文本为日期，不依赖字符串硬匹配
+        def _parse_h3_date(text: str) -> Optional[date]:
+            t = (text or "").strip()
+            # arXiv 的 h3 往往长这样："Mon, 12 Jan 2026 (showing first 50 of 120 entries )"
+            # 先截断括号后缀，再做 fuzzy parse，避免解析失败
+            t = t.split("(", 1)[0].strip()
+            try:
+                return date_parser.parse(t, fuzzy=True).date()
+            except Exception:
+                return None
 
-        # 第一步：先收集所有候选的 URL 和标题（不访问 abs 页）
+        h3 = None
+        for h in soup.find_all("h3"):
+            d = _parse_h3_date(h.get_text(" ", strip=True))
+            if d == target_date:
+                h3 = h
+                break
+
+        if not h3:
+            h3_texts = [x.get_text(" ", strip=True) for x in soup.find_all("h3")][:12]
+            print(f"[INFO] 在 arXiv list 页面未找到日期分组 {target_date}，页面前12个h3={h3_texts}")
+            return []
+
+        # 2) h3 在 dl#articles 内部，收集该 h3 之后、下一个 h3 之前的所有 dt/dd 对
         candidates = []
-        for dt, dd in pairs[:need_count * 4]:  # 多收集一些候选
+        
+        # 从 h3 开始遍历后续的兄弟节点
+        current = h3.find_next_sibling()
+        while current:
+            # 如果遇到下一个 h3，停止
+            if current.name == 'h3':
+                break
+            
+            # 收集 dt 和对应的 dd
+            if current.name == 'dt':
+                dt = current
+                dd = dt.find_next_sibling('dd')
+                if dd:
+                    candidates.append((dt, dd))
+            
+            current = current.find_next_sibling()
+        
+        print(f"[INFO] 日期 {target_date} 收集到 {len(candidates)} 个候选论文链接")
+        
+        # 3. 从 dt/dd 对中提取链接、标题、发布时间
+        paper_data = []
+        for dt, dd in candidates:
             try:
                 abs_a = dt.select_one('a[href^="/abs/"]')
                 if not abs_a:
@@ -82,18 +121,30 @@ class ArxivCsAiSource(BaseSource):
                 title = re.sub(r"^Title:\s*", "", title).strip()
                 if not title:
                     continue
-                    
-                candidates.append((abs_url, title))
+
+                # 解析提交日期，作为 publish_time
+                publish_time = datetime.now()
+                dateline_el = dd.select_one('.list-dateline')
+                if dateline_el:
+                    submitted_text = dateline_el.get_text(strip=True)
+                    m = re.search(r"\(Submitted on (.*?)\)", submitted_text)
+                    if m:
+                        try:
+                            publish_time = date_parser.parse(m.group(1))
+                        except Exception:
+                            pass
+
+                paper_data.append((abs_url, title, publish_time))
             except Exception:
                 continue
 
-        print(f"[INFO] 收集到 {len(candidates)} 个候选论文链接")
+        print(f"[INFO] 日期 {target_date} 成功解析 {len(paper_data)} 篇论文信息")
 
-        # 第二步：并发抓取 abs 页面（限制并发数）
+        # 4. 并发抓取摘要信息
         import asyncio
-        semaphore = asyncio.Semaphore(5)  # 最多5个并发请求
-        
-        async def fetch_one(abs_url: str, title: str) -> Optional[Article]:
+        semaphore = asyncio.Semaphore(5)
+
+        async def fetch_one(abs_url: str, title: str, pub_time: datetime) -> Optional[Article]:
             async with semaphore:
                 try:
                     abs_html = await self.fetch(abs_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -103,54 +154,26 @@ class ArxivCsAiSource(BaseSource):
                     abstract = abstract_el.get_text(" ", strip=True) if abstract_el else ""
                     abstract = re.sub(r"^Abstract:\s*", "", abstract).strip()
 
-                    # 解析提交日期
-                    submitted_date = None
-                    publish_time = datetime.utcnow()
-                    dateline = abs_soup.select_one('div.dateline')
-                    if dateline and dateline.get_text(strip=True):
-                        t = dateline.get_text(" ", strip=True)
-                        m = re.search(r"Submitted\s+on\s+(\d+\s+\w+\s+\d{4})", t)
-                        if m:
-                            try:
-                                publish_time = date_parser.parse(m.group(1))
-                                submitted_date = publish_time.date()
-                            except Exception:
-                                pass
-
-                    # 只保留目标日期的文章
-                    if submitted_date != target_date:
-                        return None
-
-                    image_url = None
-                    content = abstract
-                    summary = abstract[:220] if abstract else ""
-
                     return Article(
                         title=title,
                         url=abs_url,
-                        summary=summary,
-                        content=content,
-                        publish_time=publish_time,
+                        summary=abstract[:220] if abstract else "",
+                        content=abstract,
+                        publish_time=pub_time,
                         source=self.source_name,
                         source_name="arXiv cs.AI",
                         author="",
-                        image_url=image_url,
+                        image_url=None,
                         tags=[],
                         extra={},
                     )
-                except Exception as e:
+                except Exception:
                     return None
 
-        # 并发抓取
-        tasks = [fetch_one(url, title) for url, title in candidates]
+        tasks = [fetch_one(url, title, ptime) for url, title, ptime in paper_data[:need_count]]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        articles = []
-        for r in results:
-            if isinstance(r, Article):
-                articles.append(r)
-                if len(articles) >= need_count:
-                    break
 
-        print(f"[INFO] 日期 {target_date} 找到 {len(articles)} 篇文章（检查了 {len(candidates)} 个候选）")
+        articles = [r for r in results if isinstance(r, Article)]
+
+        print(f"[INFO] 日期 {target_date} 成功抓取 {len(articles)} 篇文章")
         return articles

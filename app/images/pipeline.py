@@ -8,7 +8,7 @@ from app.images.downloader import download_image, guess_ext_from_url, safe_filen
 from app.images.separator import generate_separator
 
 
-def prepare_images(*, day_dir: Path, selected: List[Dict[str, Any]], draft_type: str, cover_cfg: Dict[str, Any]) -> Tuple[Optional[str], Dict[str, str]]:
+def prepare_images(*, day_dir: Path, selected: List[Dict[str, Any]], draft_type: str, cover_cfg: Dict[str, Any], column_name: str = "") -> Tuple[Optional[str], Dict[str, str]]:
     """为当天输出准备图片文件
 
     返回：
@@ -16,36 +16,38 @@ def prepare_images(*, day_dir: Path, selected: List[Dict[str, Any]], draft_type:
     - images_rel: article_url -> image相对路径（相对 day_dir）
 
     策略：
-    - 生成封面 cover.png
-    - 每条新闻：优先下载其 image_url；若没有/下载失败，生成一个 separator 图片充当“配图占位”
+    - 图片命名格式：栏目名_序号_标题.jpg（清晰明了）
+    - 所有图片统一放在 images/ 目录
     """
 
     day_dir.mkdir(parents=True, exist_ok=True)
     images_dir = day_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) cover - 禁用自动生成，只从文章抓取
+    # 不生成封面
     cover_rel = None
-    # 不再自动生成封面，只使用文章中的图片
 
-    # 2) per-article images
+    # 下载文章图片，使用清晰的命名
     images_rel: Dict[str, str] = {}
     for idx, a in enumerate(selected, 1):
         url = a.get("url")
         img_url = a.get("image_url")
+        title = a.get("title", "")
         if not url:
             continue
 
         rel = None
         if img_url:
             ext = guess_ext_from_url(img_url)
-            fname = f"{idx:02d}_{safe_filename(a.get('source','src'))}{ext}"
+            # 清晰的命名：栏目名_序号_标题前20字符
+            title_safe = safe_filename(title[:20]) if title else "untitled"
+            fname = f"{column_name}_{idx:02d}_{title_safe}{ext}"
             out_path = images_dir / fname
             got = download_image(img_url, out_path)
             if got:
                 rel = f"images/{fname}"
+                print(f"[INFO] 下载图片: {fname}")
 
-        # 不再生成占位图，只使用从文章抓取的图片
         if rel:
             images_rel[url] = rel
 

@@ -24,7 +24,10 @@ def _inline(s: str) -> str:
 
 
 def _render_paragraphs(lines: List[str]) -> List[str]:
-    """渲染段落，统一使用有序列表（数字编号）"""
+    """渲染段落，统一使用有序列表（数字编号）
+    
+    注意：不渲染 # 和 ## 标题，只保留栏目标题（每日资讯、科创头条、学术动态）
+    """
     out: List[str] = []
     in_ol = False  # 有序列表状态
     
@@ -37,21 +40,11 @@ def _render_paragraphs(lines: List[str]) -> List[str]:
                 continue
             continue
 
-        if line.startswith("# "):
-            if in_ol:
-                out.append("</ol>")
-                in_ol = False
-            out.append(
-                f"<h1 style=\"font-size:24px;line-height:1.4;margin:18px 0 10px;\">{_inline(line[2:])}</h1>"
-            )
-        elif line.startswith("## "):
-            if in_ol:
-                out.append("</ol>")
-                in_ol = False
-            out.append(
-                f"<h2 style=\"font-size:18px;line-height:1.5;margin:16px 0 10px;\">{_inline(line[3:])}</h2>"
-            )
-        elif line.startswith("> "):
+        # 跳过 markdown 中的标题（# 和 ##），只保留栏目标题
+        if line.startswith("# ") or line.startswith("## "):
+            # 不渲染，直接跳过
+            continue
+        if line.startswith("> "):
             if in_ol:
                 out.append("</ol>")
                 in_ol = False
@@ -89,20 +82,6 @@ def _render_paragraphs(lines: List[str]) -> List[str]:
     return out
 
 
-def _pick_column_images(items: List[Dict[str, Any]], images_rel: Dict[str, str], max_images: int = 2) -> List[str]:
-    picked: List[str] = []
-    for a in items:
-        if len(picked) >= max_images:
-            break
-        url = a.get("url")
-        if not url:
-            continue
-        img = images_rel.get(url)
-        if img and img not in picked:
-            picked.append(img)
-    return picked
-
-
 def render_wechat_html(
     *,
     columns_data: List[Dict[str, Any]],
@@ -112,24 +91,14 @@ def render_wechat_html(
     """渲染最终公众号 HTML（单页三栏目）。
 
     columns_data: [{draft, items, cover_rel, images_rel}, ...]
-    - 每个栏目渲染：栏目标题 +（可选）1-2张栏目配图 + Markdown正文
-    - 文末输出所有来源 URL
+    - 每个栏目渲染：栏目标题 + Markdown正文
+    - 不包含图片（图片单独保存，用户手动上传到微信）
+    - 文末按栏目顺序输出文献来源（标题+超链接）
     """
 
     out: List[str] = []
 
-    # 顶部封面：取第一个栏目生成的封面（如果有）
-    top_cover = None
-    for c in columns_data:
-        cover_rel = c.get("cover_rel")
-        if cover_rel:
-            top_cover = cover_rel
-            break
-
-    if top_cover:
-        out.append(
-            f"<p style=\"margin:0 0 14px;\"><img src=\"{_esc(top_cover)}\" style=\"width:100%;border-radius:10px;\"/></p>"
-        )
+    # 不再包含封面图片
 
     out.append(
         f"<p style=\"margin:6px 0 14px;font-size:13px;line-height:1.6;color:#666;\">日期：{_esc(run_date.isoformat())}</p>"
@@ -138,7 +107,6 @@ def render_wechat_html(
     for idx, col in enumerate(columns_data, 1):
         draft: Dict[str, Any] = col.get("draft") or {}
         items: List[Dict[str, Any]] = col.get("items") or []
-        images_rel: Dict[str, str] = col.get("images_rel") or {}
 
         col_name = draft.get("name") or f"栏目{idx}"
         md = draft.get("markdown") or ""
@@ -148,26 +116,41 @@ def render_wechat_html(
             f"<h2 style=\"font-size:20px;line-height:1.5;margin:14px 0 10px;\">{_esc(col_name)}</h2>"
         )
 
-        # 每栏 1-2 张图
-        picked_imgs = _pick_column_images(items, images_rel, max_images=2)
-        for img_rel in picked_imgs:
-            out.append(
-                f"<p style=\"margin:8px 0 14px;\"><img src=\"{_esc(img_rel)}\" style=\"width:100%;border-radius:8px;\"/></p>"
-            )
+        # 不再包含图片
 
         out.extend(_render_paragraphs(md.splitlines()))
 
-    # 信息来源：列出 URL
-    if source_urls:
-        out.append("<hr style=\"border:none;border-top:1px solid #eee;margin:18px 0;\"/>")
+    # 信息来源：按栏目顺序，显示标题+超链接
+    out.append("<hr style=\"border:none;border-top:1px solid #eee;margin:18px 0;\"/>")
+    out.append(
+        "<h2 style=\"font-size:18px;line-height:1.5;margin:16px 0 10px;\">信息来源</h2>"
+    )
+    
+    # 按栏目顺序输出文献来源
+    for col in columns_data:
+        col_name = col.get("draft", {}).get("name") or ""
+        items = col.get("items") or []
+        
+        if not items:
+            continue
+        
+        # 栏目小标题
         out.append(
-            "<h2 style=\"font-size:18px;line-height:1.5;margin:16px 0 10px;\">信息来源</h2>"
+            f"<h3 style=\"font-size:16px;line-height:1.5;margin:14px 0 8px;font-weight:bold;\">{_esc(col_name)}</h3>"
         )
         out.append("<ol style=\"padding-left:22px;margin:10px 0;\">")
-        for u in sorted(set(source_urls)):
-            out.append(
-                f"<li style=\"margin:6px 0;font-size:13px;line-height:1.6;color:#333;\">{_esc(u)}</li>"
-            )
+        
+        for item in items:
+            title = item.get("title", "无标题")
+            url = item.get("url", "")
+            if url:
+                # 超链接格式：标题是可点击的链接
+                out.append(
+                    f"<li style=\"margin:6px 0;font-size:13px;line-height:1.6;color:#333;\">"
+                    f"<a href=\"{_esc(url)}\" target=\"_blank\" style=\"color:#0066cc;text-decoration:none;\">{_esc(title)}</a>"
+                    f"</li>"
+                )
+        
         out.append("</ol>")
 
     body = "\n".join(out)
